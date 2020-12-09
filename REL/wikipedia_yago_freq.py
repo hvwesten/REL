@@ -1,4 +1,4 @@
-import os
+import os, sqlite3, json
 import re
 from urllib.parse import unquote
 
@@ -362,3 +362,96 @@ class WikipediaYagoFreq:
             disambiguation_ent_errors,
             [len(start_entities), len(end_entities), len(end_mentions)],
         )
+
+
+    def __initialize_custom_db(self):
+        db_url = os.path.join(self.base_url, 'counts/counts.db')
+        #db = sqlite3.connect(db_url, isolation_level=None)
+        db = sqlite3.connect(db_url)
+        c = db.cursor()
+
+        ## Create custom counts table
+        c.execute('''CREATE TABLE IF NOT EXISTS custom_counts(
+                        mention text,
+                        entity text, 
+                        count integer) ''')
+
+        # self.counts_db = db
+        return db
+    
+    def fill_db_from_json(self):
+        ## Fill with data from json
+
+        # f = open(os.path.join(self.base_url, 'counts/data.json'))
+        # clueweb_dict = json.load(f)
+        # lines = 0
+
+        # for mention, entity_dict in clueweb_dict.items():
+        #     for entity, count in entity_dict.items():
+        #         lines += 1
+        #         if (lines % 1000000 == 0):
+        #             print("Processed {} lines".format(lines))
+
+        #         c.execute('''INSERT INTO custom_counts(mention, entity, count) 
+        #                         VALUES (?, ?, ?)''', (mention, entity, count))
+        pass
+
+    def compute_custom_with_db (self, custom=None):
+        """
+        Computes p(e|m) index for YAGO and combines this index with the Wikipedia p(e|m) index as reported
+        by Ganea et al. in 'Deep Joint Entity Disambiguation with Local Neural Attention'.
+
+        Alternatively, users may specificy their own custom p(e|m) by providing mention/entity counts.
+
+
+        :return:
+        """ 
+        #TODO enable custom frequencies
+
+        print("Computing p(e|m)")
+
+        db = self.__initialize_custom_db()
+        c = db.cursor()
+        d = db.cursor()
+        
+        #TODO work in batches
+        # e.g. WHERE ROWID BETWEEN 0 AND 1000
+        
+        c.execute('''
+                SELECT mention, COUNT(entity)
+                FROM custom_counts
+                GROUP BY mention''')
+        
+        
+        for mention, total in c:
+            d.execute('''
+                    SELECT entity, count
+                    FROM custom_counts
+                    WHERE mention=?
+                        ''', (mention, ))
+            data = d.fetchall()
+
+            # Assuming uniform distribution, add to mention_freq & calculate prior
+            if mention not in self.mention_freq:
+                self.mention_freq[mention] = 0
+            self.mention_freq[mention] += 1
+            cust_ment_ent_temp = {
+                k: 1 / total for k, v in data
+            }
+
+            if mention not in self.p_e_m:
+                self.p_e_m[mention] = cust_ment_ent_temp
+            else:
+                for ent_wiki_id in cust_ment_ent_temp:
+                    prob = cust_ment_ent_temp[ent_wiki_id]
+                    if ent_wiki_id not in self.p_e_m[mention]:
+                        self.p_e_m[mention][ent_wiki_id] = 0.0
+
+                    # Assumes addition of p(e|m) as described by authors.
+                    self.p_e_m[mention][ent_wiki_id] = np.round(
+                        min(1.0, self.p_e_m[mention][ent_wiki_id] + prob), 3
+                    )
+
+        db.close()
+    
+        
