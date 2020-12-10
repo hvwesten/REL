@@ -376,6 +376,10 @@ class WikipediaYagoFreq:
                         entity text, 
                         count integer) ''')
 
+        # Create index for faster retrieval
+        c.execute('''CREATE INDEX IF NOT EXISTS  mentions_index 
+                 ON custom_counts (mention)''')
+
         # self.counts_db = db
         return db
     
@@ -438,6 +442,10 @@ class WikipediaYagoFreq:
             cust_ment_ent_temp = {
                 k: 1 / total for k, v in data
             }
+
+            # cust_ment_ent_temp = {}
+            # for entity, _ in d:
+            #     cust_ment_ent_temp[entity] =  1 / total
 
             if mention not in self.p_e_m:
                 self.p_e_m[mention] = cust_ment_ent_temp
