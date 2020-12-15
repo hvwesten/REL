@@ -223,12 +223,19 @@ class WikipediaYagoFreq:
                                 self.wiki_freq[mention][ent_name] = 0
                             self.wiki_freq[mention][ent_name] += freq_ent
 
-    def __wiki_counts(self):
+    def __wiki_counts(self, using_database=False):
         """
         Computes mention/entity for a given Wiki dump.
 
         :return:
         """
+        using_db = using_database
+        c = None
+        if using_db:
+            db_url = os.path.join(self.base_url, 'counts/counts.db')
+            # db = sqlite3.connect(db_url)
+            db = sqlite3.connect(db_url, isolation_level=None)
+            c = db.cursor()
 
         num_lines = 0
         num_valid_hyperlinks = 0
@@ -253,13 +260,14 @@ class WikipediaYagoFreq:
             with open(wiki_file, "r", encoding="utf-8") as f:
                 for line in f:
                     num_lines += 1
-
-                    if num_lines % 5000000 == 0:
+                    # if num_lines % 5000000 == 0:
+                    if num_lines % 500 == 0:
                         print(
                             "Processed {} lines, valid hyperlinks {}".format(
                                 num_lines, num_valid_hyperlinks
                             )
                         )
+                        break
                     if '<doc id="' in line:
                         id = int(line[line.find("id") + 4 : line.find("url") - 2])
                         if id <= last_processed_id:
@@ -277,29 +285,51 @@ class WikipediaYagoFreq:
                             ) = self.__extract_text_and_hyp(line)
 
                             disambiguation_ent_errors += disambiguation_ent_error
+                            
+                            if not using_db:
+                                for el in list_hyp:
+                                    mention = el["mention"]
+                                    ent_wiki_id = el["ent_wikiid"]
 
-                            for el in list_hyp:
-                                mention = el["mention"]
-                                ent_wiki_id = el["ent_wikiid"]
+                                    num_valid_hyperlinks += 1
+                                    if mention not in self.wiki_freq:
+                                        self.wiki_freq[mention] = {}
 
-                                num_valid_hyperlinks += 1
-                                if mention not in self.wiki_freq:
-                                    self.wiki_freq[mention] = {}
+                                    if (
+                                        ent_wiki_id
+                                        in self.wikipedia.wiki_id_name_map["ent_id_to_name"]
+                                    ):
+                                        if mention not in self.mention_freq:
+                                            self.mention_freq[mention] = 0
+                                        self.mention_freq[mention] += 1
 
-                                if (
-                                    ent_wiki_id
-                                    in self.wikipedia.wiki_id_name_map["ent_id_to_name"]
-                                ):
-                                    if mention not in self.mention_freq:
-                                        self.mention_freq[mention] = 0
-                                    self.mention_freq[mention] += 1
+                                        ent_name = self.wikipedia.wiki_id_name_map[
+                                            "ent_id_to_name"
+                                        ][ent_wiki_id].replace(" ", "_")
+                                        if ent_name not in self.wiki_freq[mention]:
+                                            self.wiki_freq[mention][ent_name] = 0
+                                        self.wiki_freq[mention][ent_name] += 1
+                            else:
+                                for el in list_hyp:
+                                    num_valid_hyperlinks += 1
 
-                                    ent_name = self.wikipedia.wiki_id_name_map[
-                                        "ent_id_to_name"
-                                    ][ent_wiki_id].replace(" ", "_")
-                                    if ent_name not in self.wiki_freq[mention]:
-                                        self.wiki_freq[mention][ent_name] = 0
-                                    self.wiki_freq[mention][ent_name] += 1
+                                #TODO: convert wiki id to actual entity name
+
+                                #TODO: add mention to mention_freq
+
+                                ment_ent_list = [ (el['mention'], el['ent_wikiid']) for el in list_hyp ]
+
+                                c.execute("BEGIN TRANSACTION;")
+                                c.executemany('''INSERT INTO wiki_counts(mention, entity, count)
+                                                    VALUES (?, ?, 1)
+                                                    ON CONFLICT(mention, entity)
+                                                    DO UPDATE SET count=count+1
+                                                ''', ment_ent_list)
+                                c.execute("COMMIT;")
+
+
+        if using_db:
+            c.close()
 
         print(
             "Done computing Wikipedia counts. Num valid hyperlinks = {}".format(
@@ -462,4 +492,59 @@ class WikipediaYagoFreq:
 
         db.close()
     
-        
+    def __initialize_wiki_db(self):
+        print("Initializing wiki database")
+
+        db_url = os.path.join(self.base_url, 'counts/counts.db')
+        # db = sqlite3.connect(db_url)
+        db = sqlite3.connect(db_url, isolation_level=None)
+        c = db.cursor()
+
+        c.execute('''CREATE TABLE IF NOT EXISTS wiki_counts(
+                        mention text,
+                        entity text, 
+                        count integer,
+                        UNIQUE(mention, entity)) ''')
+
+        # c.execute('''CREATE INDEX IF NOT EXISTS  wiki_mentions_index 
+        #          ON wiki_counts (mention)''')
+                
+        return db
+
+
+    def compute_wiki_with_db(self):
+        """
+        Computes p(e|m) index for a given wiki and crosswikis dump.
+
+        :return:
+        """
+        # self.__initialize_wiki_db()
+
+        self.__wiki_counts(using_database=True)
+
+        # self.__cross_wiki_counts()
+
+        # Step 1: Calculate p(e|m) for wiki.
+        # print("Filtering candidates and calculating p(e|m) values for Wikipedia.")
+        # for ent_mention in self.wiki_freq:
+        #     if len(ent_mention) < 1:
+        #         continue
+
+        #     ent_wiki_names = sorted(
+        #         self.wiki_freq[ent_mention].items(), key=lambda kv: kv[1], reverse=True
+        #     )
+        #     # Get the sum of at most 100 candidates, but less if less are available.
+        #     total_count = np.sum([v for k, v in ent_wiki_names][:100])
+
+        #     if total_count < 1:
+        #         continue
+
+        #     self.p_e_m[ent_mention] = {}
+
+        #     for ent_name, count in ent_wiki_names:
+        #         self.p_e_m[ent_mention][ent_name] = count / total_count
+
+        #         if len(self.p_e_m[ent_mention]) >= 100:
+        #             break
+
+        # del self.wiki_freq
