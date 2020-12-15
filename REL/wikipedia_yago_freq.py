@@ -231,11 +231,9 @@ class WikipediaYagoFreq:
         """
         using_db = using_database
         c = None
-        if using_db:
-            db_url = os.path.join(self.base_url, 'counts/counts.db')
-            # db = sqlite3.connect(db_url)
-            db = sqlite3.connect(db_url, isolation_level=None)
-            c = db.cursor()
+        db_url = os.path.join(self.base_url, 'counts.db')
+        db = self.__initialize_custom_db(db_url)
+        # db = sqlite3.connect(db_url, isolation_level=None)
 
         num_lines = 0
         num_valid_hyperlinks = 0
@@ -246,9 +244,17 @@ class WikipediaYagoFreq:
         last_processed_id = -1
         exist_id_found = False
 
+        # el['mention'], el['ent_wikiid']
+
+        ment_ent_list = []
+
         wiki_anchor_files = os.listdir(
             os.path.join(self.base_url, self.wiki_version, "basic_data/anchor_files/")
         )
+
+        from time import time
+        start = time()
+
         for wiki_anchor in wiki_anchor_files:
             wiki_file = os.path.join(
                 self.base_url,
@@ -261,13 +267,31 @@ class WikipediaYagoFreq:
                 for line in f:
                     num_lines += 1
                     # if num_lines % 5000000 == 0:
-                    if num_lines % 500 == 0:
+                    if num_lines % 5000000 == 0:
+
+                        # ----------------- NOTE IMPORTANT -----------------------
                         print(
                             "Processed {} lines, valid hyperlinks {}".format(
                                 num_lines, num_valid_hyperlinks
                             )
                         )
-                        break
+                        
+                        # Execute many.
+                        c = db.cursor()
+                        c.execute("BEGIN TRANSACTION;")
+                        c.executemany('''INSERT INTO wiki_counts(mention, entity)
+                                            VALUES (?, ?)
+                                        ''', ment_ent_list)
+                        c.execute("COMMIT;")
+                        c.close()
+                        
+                        print('Writing {} mention/entity combinations in {} seconds'.format(len(ment_ent_list), time()-start)) 
+                        start = time()
+
+                        # Reset index to preserve memory.
+                        ment_ent_list = [] 
+                        # ----------------- NOTE IMPORTANT -----------------------
+
                     if '<doc id="' in line:
                         id = int(line[line.find("id") + 4 : line.find("url") - 2])
                         if id <= last_processed_id:
@@ -285,8 +309,11 @@ class WikipediaYagoFreq:
                             ) = self.__extract_text_and_hyp(line)
 
                             disambiguation_ent_errors += disambiguation_ent_error
-                            
-                            if not using_db:
+                            if using_database:
+                                # Get all mention/entities and extend list.
+                                temp = [ (el['mention'], el['ent_wikiid']) for el in list_hyp ]
+                                ment_ent_list.extend(temp)
+                            else:
                                 for el in list_hyp:
                                     mention = el["mention"]
                                     ent_wiki_id = el["ent_wikiid"]
@@ -309,23 +336,6 @@ class WikipediaYagoFreq:
                                         if ent_name not in self.wiki_freq[mention]:
                                             self.wiki_freq[mention][ent_name] = 0
                                         self.wiki_freq[mention][ent_name] += 1
-                            else:
-                                for el in list_hyp:
-                                    num_valid_hyperlinks += 1
-
-                                #TODO: convert wiki id to actual entity name
-
-                                #TODO: add mention to mention_freq
-
-                                ment_ent_list = [ (el['mention'], el['ent_wikiid']) for el in list_hyp ]
-
-                                c.execute("BEGIN TRANSACTION;")
-                                c.executemany('''INSERT INTO wiki_counts(mention, entity, count)
-                                                    VALUES (?, ?, 1)
-                                                    ON CONFLICT(mention, entity)
-                                                    DO UPDATE SET count=count+1
-                                                ''', ment_ent_list)
-                                c.execute("COMMIT;")
 
 
         if using_db:
@@ -394,21 +404,27 @@ class WikipediaYagoFreq:
         )
 
 
-    def __initialize_custom_db(self):
-        db_url = os.path.join(self.base_url, 'counts/counts.db')
+    def __initialize_custom_db(self, db_url):
+        # db_url = os.path.join(self.base_url, 'counts/counts.db')
         #db = sqlite3.connect(db_url, isolation_level=None)
         db = sqlite3.connect(db_url)
         c = db.cursor()
 
         ## Create custom counts table
-        c.execute('''CREATE TABLE IF NOT EXISTS custom_counts(
+        # c.execute('''CREATE TABLE IF NOT EXISTS custom_counts(
+        #                 mention text,
+        #                 entity text, 
+        #                 count integer) ''')
+
+        c.execute('''CREATE TABLE IF NOT EXISTS wiki_counts(
                         mention text,
-                        entity text, 
-                        count integer) ''')
+                        entity text
+                        )''')
 
         # Create index for faster retrieval
-        c.execute('''CREATE INDEX IF NOT EXISTS  mentions_index 
-                 ON custom_counts (mention)''')
+        #NOTE: Create index after done inserting on both mention and entity.
+        # c.execute('''CREATE INDEX IF NOT EXISTS  mentions_index 
+        #          ON custom_counts (mention)''')
 
         # self.counts_db = db
         return db
@@ -430,7 +446,7 @@ class WikipediaYagoFreq:
         #                         VALUES (?, ?, ?)''', (mention, entity, count))
         pass
 
-    def compute_custom_with_db (self, custom=None):
+    def compute_custom_with_db(self, custom=None):
         """
         Computes p(e|m) index for YAGO and combines this index with the Wikipedia p(e|m) index as reported
         by Ganea et al. in 'Deep Joint Entity Disambiguation with Local Neural Attention'.
@@ -450,6 +466,7 @@ class WikipediaYagoFreq:
         
         #TODO work in batches
         # e.g. WHERE ROWID BETWEEN 0 AND 1000
+
         
         c.execute('''
                 SELECT mention, COUNT(entity)
@@ -496,9 +513,13 @@ class WikipediaYagoFreq:
         print("Initializing wiki database")
 
         db_url = os.path.join(self.base_url, 'counts/counts.db')
+
+        print(db_url)
+        print('========================')
         # db = sqlite3.connect(db_url)
         db = sqlite3.connect(db_url, isolation_level=None)
         c = db.cursor()
+        #NOTE: Everytime we compute this again, the table should be cleared (same with custom etc).
 
         c.execute('''CREATE TABLE IF NOT EXISTS wiki_counts(
                         mention text,
@@ -518,8 +539,6 @@ class WikipediaYagoFreq:
 
         :return:
         """
-        # self.__initialize_wiki_db()
-
         self.__wiki_counts(using_database=True)
 
         # self.__cross_wiki_counts()
