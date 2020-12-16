@@ -165,7 +165,7 @@ class WikipediaYagoFreq:
 
         return custom_freq
 
-    def __cross_wiki_counts(self):
+    def __cross_wiki_counts(self, using_database):
         """
         Updates mention/entity for Wiki with this additional corpus.
 
@@ -174,6 +174,22 @@ class WikipediaYagoFreq:
 
         print("Updating counts by merging with CrossWiki")
 
+        # c = None
+        db = None
+        if using_database:
+            db_url = os.path.join(self.base_url, 'temp3/counts.db')
+            db = sqlite3.connect(db_url)
+            db.execute('''CREATE TABLE IF NOT EXISTS wiki_counts(
+                            mention text,
+                            entity text
+                            )''')
+
+        num_lines = 0
+        ment_ent_list = []
+
+        from time import time
+        start = time()
+
         cnt = 0
         crosswiki_path = os.path.join(
             self.base_url, "generic/p_e_m_data/crosswikis_p_e_m.txt"
@@ -181,47 +197,78 @@ class WikipediaYagoFreq:
 
         with open(crosswiki_path, "r", encoding="utf-8") as f:
             for line in f:
+                num_lines += 1
+                # if num_lines % 5000000 == 0:
+                if num_lines % 5000000 == 0:
+                    # break
+                    print("Processed {} lines".format(num_lines))
+
+                    c = db.cursor()
+                    c.execute("BEGIN TRANSACTION;")
+                    c.executemany('''INSERT INTO wiki_counts(mention, entity)
+                                            VALUES (?, ?)
+                                        ''', ment_ent_list)
+                    c.execute("COMMIT;")
+                    c.close()
+
+                    print('Writing {} mention/entity combinations in {} seconds'.format(len(ment_ent_list), time()-start)) 
+                    start = time()
+
+                    # Reset index to preserve memory.
+                    ment_ent_list = [] 
+
                 parts = line.split("\t")
                 mention = unquote(parts[0])
 
                 if ("Wikipedia" not in mention) and ("wikipedia" not in mention):
-                    if mention not in self.wiki_freq:
-                        self.wiki_freq[mention] = {}
+                    if using_database:
+                        num_ents = len(parts) 
+                        mentions = [mention] * num_ents
+                        entities = [ int(parts[i].split(",")[0]) for i in range(2, num_ents)]
+                        # frequencies = [ int(parts[i].split(",")[1]) for i in range(2, num_ents)]
 
-                    num_ents = len(parts)
-                    for i in range(2, num_ents):
-                        ent_str = parts[i].split(",")
-                        ent_wiki_id = int(ent_str[0])
-                        freq_ent = int(ent_str[1])
+                        temp = [ (m, e) for m,e in zip(mentions, entities)]
+                        
+                        ment_ent_list.extend(temp)
 
-                        if (
-                            ent_wiki_id
-                            not in self.wikipedia.wiki_id_name_map["ent_id_to_name"]
-                        ):
-                            ent_name_re = self.wikipedia.wiki_redirect_id(ent_wiki_id)
+                    else:
+                        if mention not in self.wiki_freq:
+                            self.wiki_freq[mention] = {}
+
+                        num_ents = len(parts)
+                        for i in range(2, num_ents):
+                            ent_str = parts[i].split(",")
+                            ent_wiki_id = int(ent_str[0])
+                            freq_ent = int(ent_str[1])
+    
                             if (
-                                ent_name_re
-                                in self.wikipedia.wiki_id_name_map["ent_name_to_id"]
+                                ent_wiki_id
+                                not in self.wikipedia.wiki_id_name_map["ent_id_to_name"]
                             ):
-                                ent_wiki_id = self.wikipedia.wiki_id_name_map[
-                                    "ent_name_to_id"
-                                ][ent_name_re]
+                                ent_name_re = self.wikipedia.wiki_redirect_id(ent_wiki_id)
+                                if (
+                                    ent_name_re
+                                    in self.wikipedia.wiki_id_name_map["ent_name_to_id"]
+                                ):
+                                    ent_wiki_id = self.wikipedia.wiki_id_name_map[
+                                        "ent_name_to_id"
+                                    ][ent_name_re]
 
-                        cnt += 1
-                        if (
-                            ent_wiki_id
-                            in self.wikipedia.wiki_id_name_map["ent_id_to_name"]
-                        ):
-                            if mention not in self.mention_freq:
-                                self.mention_freq[mention] = 0
-                            self.mention_freq[mention] += freq_ent
+                            cnt += 1
+                            if (
+                                ent_wiki_id
+                                in self.wikipedia.wiki_id_name_map["ent_id_to_name"]
+                            ):
+                                if mention not in self.mention_freq:
+                                    self.mention_freq[mention] = 0
+                                self.mention_freq[mention] += freq_ent
 
-                            ent_name = self.wikipedia.wiki_id_name_map[
-                                "ent_id_to_name"
-                            ][ent_wiki_id].replace(" ", "_")
-                            if ent_name not in self.wiki_freq[mention]:
-                                self.wiki_freq[mention][ent_name] = 0
-                            self.wiki_freq[mention][ent_name] += freq_ent
+                                ent_name = self.wikipedia.wiki_id_name_map[
+                                    "ent_id_to_name"
+                                ][ent_wiki_id].replace(" ", "_")
+                                if ent_name not in self.wiki_freq[mention]:
+                                    self.wiki_freq[mention][ent_name] = 0
+                                self.wiki_freq[mention][ent_name] += freq_ent
 
     def __wiki_counts(self, using_database=False):
         """
@@ -229,10 +276,12 @@ class WikipediaYagoFreq:
 
         :return:
         """
-        using_db = using_database
-        c = None
-        db_url = os.path.join(self.base_url, 'counts.db')
-        db = self.__initialize_custom_db(db_url)
+
+        # c = None
+        db = None
+        if using_database:
+            db_url = os.path.join(self.base_url, 'temp3/counts.db')
+            db = self.__initialize_wiki_db(db_url)
         # db = sqlite3.connect(db_url, isolation_level=None)
 
         num_lines = 0
@@ -313,6 +362,10 @@ class WikipediaYagoFreq:
                                 # Get all mention/entities and extend list.
                                 temp = [ (el['mention'], el['ent_wikiid']) for el in list_hyp ]
                                 ment_ent_list.extend(temp)
+
+                                for el in list_hyp:
+                                    num_valid_hyperlinks += 1
+
                             else:
                                 for el in list_hyp:
                                     mention = el["mention"]
@@ -338,8 +391,8 @@ class WikipediaYagoFreq:
                                         self.wiki_freq[mention][ent_name] += 1
 
 
-        if using_db:
-            c.close()
+        if using_database:
+            db.close()
 
         print(
             "Done computing Wikipedia counts. Num valid hyperlinks = {}".format(
@@ -411,24 +464,59 @@ class WikipediaYagoFreq:
         c = db.cursor()
 
         ## Create custom counts table
-        # c.execute('''CREATE TABLE IF NOT EXISTS custom_counts(
+        c.execute('''CREATE TABLE IF NOT EXISTS custom_counts(
+                        mention text,
+                        entity text, 
+                        count integer) ''')
+
+        # c.execute('''CREATE TABLE IF NOT EXISTS wiki_counts(
         #                 mention text,
-        #                 entity text, 
-        #                 count integer) ''')
+        #                 entity text
+        #                 )''')
+
+        # Create index for faster retrieval
+        #NOTE: Create index after done inserting on both mention and entity.
+        # c.execute('''CREATE INDEX IF NOT EXISTS  custom_mention_index 
+        #          ON custom_counts (mention)''')
+
+        # self.counts_db = db
+        return db
+    
+    def __initialize_wiki_db(self, db_url):
+        print("Initializing wiki database")
+
+        # db_url = os.path.join(self.base_url, 'temp/counts.db')
+
+        # print(db_url)
+        # print('========================')
+        db = sqlite3.connect(db_url)
+        # db = sqlite3.connect(db_url, isolation_level=None)
+        c = db.cursor()
+
+        #NOTE: Everytime we compute this again, the table should be cleared (same with custom etc).
+        c.execute("BEGIN TRANSACTION;")
+        c.execute("DELETE FROM wiki_counts")
+        c.execute("COMMIT;")
 
         c.execute('''CREATE TABLE IF NOT EXISTS wiki_counts(
                         mention text,
                         entity text
                         )''')
 
-        # Create index for faster retrieval
-        #NOTE: Create index after done inserting on both mention and entity.
-        # c.execute('''CREATE INDEX IF NOT EXISTS  mentions_index 
-        #          ON custom_counts (mention)''')
-
-        # self.counts_db = db
+        # c.execute('''CREATE INDEX IF NOT EXISTS  wiki_mention_index 
+        #          ON wiki_counts (mention)''')
+        c.close()
         return db
-    
+
+    def __create_wiki_index(self, db_url):
+        db = sqlite3.connect(db_url)
+        c = db.cursor()
+        c.execute('''CREATE INDEX IF NOT EXISTS  wiki_mention_index 
+                     ON wiki_counts (mention)''')
+        c.close()
+        return db
+
+
     def fill_db_from_json(self):
         ## Fill with data from json
 
@@ -460,7 +548,8 @@ class WikipediaYagoFreq:
 
         print("Computing p(e|m)")
 
-        db = self.__initialize_custom_db()
+        db_url = os.path.join(self.base_url, 'counts/counts.db')
+        db = self.__initialize_custom_db(db_url)
         c = db.cursor()
         d = db.cursor()
         
@@ -509,28 +598,7 @@ class WikipediaYagoFreq:
 
         db.close()
     
-    def __initialize_wiki_db(self):
-        print("Initializing wiki database")
-
-        db_url = os.path.join(self.base_url, 'counts/counts.db')
-
-        print(db_url)
-        print('========================')
-        # db = sqlite3.connect(db_url)
-        db = sqlite3.connect(db_url, isolation_level=None)
-        c = db.cursor()
-        #NOTE: Everytime we compute this again, the table should be cleared (same with custom etc).
-
-        c.execute('''CREATE TABLE IF NOT EXISTS wiki_counts(
-                        mention text,
-                        entity text, 
-                        count integer,
-                        UNIQUE(mention, entity)) ''')
-
-        # c.execute('''CREATE INDEX IF NOT EXISTS  wiki_mentions_index 
-        #          ON wiki_counts (mention)''')
-                
-        return db
+    
 
 
     def compute_wiki_with_db(self):
@@ -539,12 +607,19 @@ class WikipediaYagoFreq:
 
         :return:
         """
-        self.__wiki_counts(using_database=True)
+        # self.__wiki_counts(using_database=True)
+        
+        # db_url = os.path.join(self.base_url, 'temp/counts.db')
+        
+        # db = self.__create_wiki_index(db_url)
 
-        # self.__cross_wiki_counts()
+        self.__cross_wiki_counts(using_database=True)
 
         # Step 1: Calculate p(e|m) for wiki.
         # print("Filtering candidates and calculating p(e|m) values for Wikipedia.")
+
+
+
         # for ent_mention in self.wiki_freq:
         #     if len(ent_mention) < 1:
         #         continue
