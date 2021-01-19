@@ -493,6 +493,55 @@ class WikipediaYagoFreq:
         )
 
 
+    def __clueweb_counts(self):
+        ''' Gets ClueWeb counts as dictionary, assumes that you 
+            have a directory called 'ClueWeb09' within the 
+            original file structure
+
+            .
+            |-- generic
+            |-- wiki2014
+            |-- ClueWeb09
+                |-- ClueWeb09_English_1
+        '''
+        # lines_read = 0
+
+        clueweb_dict = dict()
+        clueweb_url = os.path.join(self.base_url, 'ClueWeb09/ClueWeb09_English_1/')
+
+        for folder in os.listdir(clueweb_url):
+            from time import time
+            start = time()
+            folder_url = os.path.join(clueweb_url, folder)
+            data_files = os.listdir(folder_url)
+            for file_name in data_files:
+                
+                file_loc = os.path.join(folder_url, file_name)
+                with open(file_loc, 'r') as f:
+                    for line in f:
+                        # lines_read += 1
+
+                        # if lines_read % 5000000 == 0:
+                        #     print("Processed {} lines".format(lines_read))
+
+                        line = line.rstrip()
+                        line = unquote(line)
+                        parts = line.split('\t')
+                        mention = parts[2]
+                        entity_mid = parts[7]
+
+                        if mention not in clueweb_dict:
+                            clueweb_dict[mention] = {}
+
+                        # TODO: convert to wiki entity
+                        if entity_mid not in clueweb_dict[mention]:
+                            clueweb_dict[mention][entity_mid] = 1
+                        else:
+                            clueweb_dict[mention][entity_mid] += 1
+            end = time()
+            print("---- Finished '{}' folder. This took {} seconds.".format(folder, (end-start)))
+        return clueweb_dict
+
     def __initialize_custom_db(self, db_url):
         # db_url = os.path.join(self.base_url, 'counts/counts.db')
         #db = sqlite3.connect(db_url, isolation_level=None)
@@ -513,18 +562,31 @@ class WikipediaYagoFreq:
         print("Initializing custom database...")
 
         # Insert data into table (TODO make this more efficient)
-        clueweb_dict = self.__clueweb_counts()
-        for mention, entity_dict in clueweb_dict.items():
-            for entity, count in entity_dict.items():
-                c.execute("BEGIN TRANSACTION;")
-                c.execute('''INSERT INTO custom_counts(mention, entity, count) 
-                            VALUES (?, ?, ?)''', (mention, entity, count))
-                c.execute("COMMIT;")
+        # clueweb_dict = self.__clueweb_counts()
+        clueweb_dict = json.load(open(os.path.join(self.base_url, 'data.json')))
 
+        for mention, entity_dict in clueweb_dict.items():
+            # for entity, count in entity_dict.items():
+                
+            #     c.execute("BEGIN TRANSACTION;")
+            #     c.execute('''INSERT INTO custom_counts(mention, entity, count) 
+            #                 VALUES (?, ?, ?)''', (mention, entity, count))
+            #     c.execute("COMMIT;")
+            
+            mention_list = [mention] * len(entity_dict)
+            ent_list = [ e for e, _ in entity_dict.items()]
+            cnt_list = [ c for _, c in entity_dict.items()]
+            # ment_ent_list = [(m, e, c) for m, e, c in zip(mention_list, ent_list, cnt_list)]
+            # print(ment_ent_list)
+            c.execute("BEGIN TRANSACTION;")
+            c.executemany('''INSERT INTO custom_counts(mention, entity, count) 
+                            VALUES (?, ?, ?)''', zip(mention_list, ent_list, cnt_list))
+            c.execute("COMMIT;")
+  
         # Create index for faster retrieval
         #NOTE: Create index after done inserting on both mention and entity.
         c.execute('''CREATE INDEX IF NOT EXISTS  custom_mention_index 
-                 ON custom_counts (mention)''')
+                 ON custom_counts (mention, entity)''')
         c.close()
         
         return db
@@ -558,56 +620,12 @@ class WikipediaYagoFreq:
         c.close()
         return db
 
-    # def __save_pem_to_file(self):
-    #     fpath = os.path.join(self.base_url, 'pem_custom_nodb.json')
-    #     with open(fpath, 'w') as f: 
-    #         json.dump(self.p_e_m, f)
+    def __save_pem_to_file(self):
+        fpath = os.path.join(self.base_url, 'pem_custom_nodb.json')
+        with open(fpath, 'w') as f: 
+            json.dump(self.p_e_m, f)
 
-    def __clueweb_counts(self):
-        ''' Gets ClueWeb counts as dictionary, assumes that you 
-            have a directory called 'ClueWeb09' within the 
-            original file structure
-
-            .
-            |-- generic
-            |-- wiki2014
-            |-- ClueWeb09
-                |-- ClueWeb09_English_1
-        '''
-        lines_read = 0
-
-        clueweb_dict = dict()
-        clueweb_url = os.path.join(self.base_url, 'ClueWeb09/ClueWeb09_English_1/')
-
-        for folder in os.listdir(clueweb_url):
-            folder_url = os.path.join(clueweb_url, folder)
-            data_files = os.listdir(folder_url)
-
-            for file_name in data_files:
-                file_loc = os.path.join(folder_url, file_name)
-                with open(file_loc, 'r') as f:
-                    for line in f:
-                        lines_read += 1
-
-                        if lines_read % 5000000 == 0:
-                            print("Processed {} lines".format(lines_read))
-
-                        line = line.rstrip()
-                        line = unquote(line)
-                        parts = line.split('\t')
-                        mention = parts[2]
-                        entity_mid = parts[7]
-
-                        if mention not in clueweb_dict:
-                            clueweb_dict[mention] = {}
-
-                        # TODO: convert to wiki entity
-                        if entity_mid not in clueweb_dict[mention]:
-                            clueweb_dict[mention][entity_mid] = 1
-                        else:
-                            clueweb_dict[mention][entity_mid] += 1
-
-        return clueweb_dict
+   
 
 
     def compute_custom_with_db(self, custom=None):
@@ -628,7 +646,7 @@ class WikipediaYagoFreq:
         db = self.__initialize_custom_db(db_url)
         c = db.cursor()
         d = db.cursor()
-        
+        # print(c.fetchmany(10))
         c.execute('''
                 SELECT mention, COUNT(entity)
                 FROM custom_counts
