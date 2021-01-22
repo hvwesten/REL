@@ -38,7 +38,8 @@ class WikipediaYagoFreq:
             columns={"p_e_m": "blob", "lower": "text", "freq": "INTEGER"},
         )
 
-        wiki_db.load_wiki(self.p_e_m, self.mention_freq, batch_size=50000, reset=True)
+        print(self.mention_freq)
+        # wiki_db.load_wiki(self.p_e_m, self.mention_freq, batch_size=50000, reset=True)
 
     def compute_wiki(self):
         """
@@ -139,7 +140,7 @@ class WikipediaYagoFreq:
                 line = line.rstrip()
                 line = unquote(line)
                 parts = line.split("\t")
-                mention = parts[0][1:-1].strip()
+                mention = parts[0][1:-1].strip()    
 
                 ent_name = parts[1].strip()
                 ent_name = ent_name.replace("&amp;", "&")
@@ -217,6 +218,7 @@ class WikipediaYagoFreq:
 
                         # Reset index to preserve memory.
                         ment_ent_list = [] 
+                        break
 
                 parts = line.split("\t")
                 mention = unquote(parts[0])
@@ -290,8 +292,10 @@ class WikipediaYagoFreq:
         # c = None
         db = None
         if using_database:
+            # db_url = os.path.join(self.base_url, 'counts/wiki_counts.db')
+            # db = self.__initialize_wiki_db(db_url)
             db_url = os.path.join(self.base_url, 'temp3/counts.db')
-            db = self.__initialize_wiki_db(db_url)
+            db = sqlite3.connect(db_url)
         # db = sqlite3.connect(db_url, isolation_level=None)
 
         num_lines = 0
@@ -350,6 +354,7 @@ class WikipediaYagoFreq:
                             # Reset index to preserve memory.
                             ment_ent_list = [] 
                         # ----------------- NOTE IMPORTANT -----------------------
+                        break
 
                     if '<doc id="' in line:
                         id = int(line[line.find("id") + 4 : line.find("url") - 2])
@@ -527,17 +532,19 @@ class WikipediaYagoFreq:
                         line = line.rstrip()
                         line = unquote(line)
                         parts = line.split('\t')
-                        mention = parts[2]
-                        entity_mid = parts[7]
-
-                        if mention not in clueweb_dict:
-                            clueweb_dict[mention] = {}
+                        mention = parts[2].strip()
+                        entity_mid = parts[7]   
 
                         # TODO: convert to wiki entity
+                        
+                        if mention not in clueweb_dict:
+                            clueweb_dict[mention] = {}
+                        
                         if entity_mid not in clueweb_dict[mention]:
                             clueweb_dict[mention][entity_mid] = 1
                         else:
                             clueweb_dict[mention][entity_mid] += 1
+            break
             end = time()
             print("---- Finished '{}' folder. This took {} seconds.".format(folder, (end-start)))
         return clueweb_dict
@@ -562,32 +569,35 @@ class WikipediaYagoFreq:
         print("Initializing custom database...")
 
         # Insert data into table (TODO make this more efficient)
-        # clueweb_dict = self.__clueweb_counts()
-        clueweb_dict = json.load(open(os.path.join(self.base_url, 'data.json')))
-
-        for mention, entity_dict in clueweb_dict.items():
-            # for entity, count in entity_dict.items():
+        clueweb_dict = self.__clueweb_counts()
+        # clueweb_dict = json.load(open(os.path.join(self.base_url, 'data.json')))
+        # n = 0
+        # for mention, entity_dict in clueweb_dict.items():
+        #     n+=1
+        #     if n % 500000 == 0:
+        #         print("Processed {} mentions so far.".format(n))
+        #     for entity, count in entity_dict.items():
                 
-            #     c.execute("BEGIN TRANSACTION;")
-            #     c.execute('''INSERT INTO custom_counts(mention, entity, count) 
-            #                 VALUES (?, ?, ?)''', (mention, entity, count))
-            #     c.execute("COMMIT;")
+        #         c.execute("BEGIN TRANSACTION;")
+        #         c.execute('''INSERT INTO custom_counts(mention, entity, count) 
+        #                     VALUES (?, ?, ?)''', (mention, entity, count))
+        #         c.execute("COMMIT;")
             
-            mention_list = [mention] * len(entity_dict)
-            ent_list = [ e for e, _ in entity_dict.items()]
-            cnt_list = [ c for _, c in entity_dict.items()]
-            # ment_ent_list = [(m, e, c) for m, e, c in zip(mention_list, ent_list, cnt_list)]
-            # print(ment_ent_list)
-            c.execute("BEGIN TRANSACTION;")
-            c.executemany('''INSERT INTO custom_counts(mention, entity, count) 
-                            VALUES (?, ?, ?)''', zip(mention_list, ent_list, cnt_list))
-            c.execute("COMMIT;")
+            # mention_list = [mention] * len(entity_dict)
+            # ent_list = [ e for e, _ in entity_dict.items()]
+            # cnt_list = [ c for _, c in entity_dict.items()]
+            # # ment_ent_list = [(m, e, c) for m, e, c in zip(mention_list, ent_list, cnt_list)]
+            # # print(ment_ent_list)
+            # c.execute("BEGIN TRANSACTION;")
+            # c.executemany('''INSERT INTO custom_counts(mention, entity, count) 
+            #                 VALUES (?, ?, ?)''', zip(mention_list, ent_list, cnt_list))
+            # c.execute("COMMIT;")
   
         # Create index for faster retrieval
         #NOTE: Create index after done inserting on both mention and entity.
-        c.execute('''CREATE INDEX IF NOT EXISTS  custom_mention_index 
-                 ON custom_counts (mention, entity)''')
-        c.close()
+        # c.execute('''CREATE INDEX IF NOT EXISTS  custom_mention_index 
+        #          ON custom_counts (mention, entity)''')
+        # c.close()
         
         return db
     
@@ -642,8 +652,12 @@ class WikipediaYagoFreq:
 
         print("Computing p(e|m)")
 
-        db_url = os.path.join(self.base_url, 'counts/counts2.db')
-        db = self.__initialize_custom_db(db_url)
+        # db_url = os.path.join(self.base_url, 'counts/custom_counts.db')
+        # db = self.__initialize_custom_db(db_url)
+
+        db_url = os.path.join(self.base_url, 'counts/counts.db')
+        db = sqlite3.connect(db_url)
+        
         c = db.cursor()
         d = db.cursor()
         # print(c.fetchmany(10))
@@ -652,11 +666,11 @@ class WikipediaYagoFreq:
                 FROM custom_counts
                 GROUP BY mention''')
         
-
         num_mentions = 0
         batch_size = 50000
         
         while True:
+            num_mentions += 1
             if num_mentions % 500000 == 0:
                 print("Processed {} custom mentions".format(num_mentions))
 
@@ -716,9 +730,9 @@ class WikipediaYagoFreq:
 
         # #TODO: move this to the right place
         db_url = os.path.join(self.base_url, 'temp3/counts.db')
-        db = self.__create_wiki_index(db_url)
+        # db = self.__create_wiki_index(db_url)
         
-        # db = sqlite3.connect(db_url)
+        db = sqlite3.connect(db_url)
     
         c = db.cursor()
         d = db.cursor()
@@ -726,7 +740,6 @@ class WikipediaYagoFreq:
         # Step 1: Calculate p(e|m) for wiki.
         print("Filtering candidates and calculating p(e|m) values for Wikipedia.")
 
-            
         c.execute('''
                 SELECT mention
                 FROM wiki_counts
@@ -737,20 +750,21 @@ class WikipediaYagoFreq:
         batch_size = 50000
 
         while True:
-            if num_mentions % 500000 == 0:
-                print("Processed {} mentions".format(num_mentions))
-
             batch = c.fetchmany(batch_size)
 
             if not batch:
                 break
 
             for row in batch:
+                num_mentions += 1
+                if num_mentions % 500000 == 0:
+                    print("Processed {} wiki mentions".format(num_mentions))
+
                 ent_mention = row[0]
                 if len(ent_mention) < 1:
                     continue
                 # print('ent_mention', ent_mention)
-                num_mentions += 1
+                # num_mentions += 1
 
                 d.execute('''
                         SELECT entity, COUNT(entity)
