@@ -40,24 +40,38 @@ class WikipediaYagoFreq:
 
         wiki_db.load_wiki(self.p_e_m, self.mention_freq, batch_size=50000, reset=True)
 
-    def compute_wiki(self, custom=None, custom_main=None, custom_add=None):
+    def compute_wiki(self, special_case=False, custom_main=None, custom_add=None):
         """
         Computes p(e|m) index for a given wiki and crosswikis dump.
             - Wiki can be changed with custom_main
             - CrossWiki can be changed using custom_add
-
+            - Special cases are:
+                - "only_crosswiki": Use only CrossWiki for p(e|m) calculation
+                - "all" : Use Wiki, CrossWiki, Clueweb and YAGO for calculation
+        
         :return:
         """
-
-        if custom_main:
+        if special_case:
+            print(f"You selected the special option: {special_case}")
+        
+        if special_case == "only_clueweb":
+            self.__load_counts(custom_main)
+        elif special_case == "only_crosswiki":
+            self.__cross_wiki_counts()
+        elif special_case == "all":
+            self.__wiki_counts()
+            self.__cross_wiki_counts()
             self.__load_counts(custom_main)
         else:
-            self.__wiki_counts()
+            if custom_main:
+                self.__load_counts(custom_main)
+            else:
+                self.__wiki_counts()
 
-        if custom_add:
-            self.__load_counts(custom_add)
-        else:
-            self.__cross_wiki_counts()
+            if custom_add:
+                self.__load_counts(custom_add)
+            else:
+                self.__cross_wiki_counts()
 
         # Step 1: Calculate p(e|m) for wiki.
         print("Filtering candidates and calculating p(e|m) values for Wikipedia.")

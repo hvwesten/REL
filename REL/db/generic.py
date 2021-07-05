@@ -119,12 +119,11 @@ class GenericLookup(DB):
         if reset:
 
             self.clear()
-        #TODO KeyError: '\x15 and  '
+
         batch = []
         start = time()
+
         for i, (ment, p_e_m) in enumerate(p_e_m_index.items()):
-            print("ment: {}\n, pem: {}\n".format(ment, p_e_m))
-            print("mtf: {}".format(mention_total_freq[ment]))
             p_e_m = sorted(p_e_m.items(), key=lambda kv: kv[1], reverse=True)
             batch.append((ment, p_e_m, ment.lower(), mention_total_freq[ment]))
 
